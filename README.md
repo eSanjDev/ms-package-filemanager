@@ -5,11 +5,11 @@ This is a package that connects to the Esanj Multi-Media system after installati
 ## Support
 
 This package supports:
-- PHP 8.1+
-- Laravel 10.x
-- Laravel 11.x
+- PHP 8.2+ (Laravel 13 requires PHP 8.3+)
 - Laravel 12.x
 - Laravel 13.x
+
+Laravel 10 and 11 are not supported because `esanj/auth-bridge` 1.x requires Laravel 12 or newer.
 
 ## Installation
 
