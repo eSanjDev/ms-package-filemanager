@@ -14,7 +14,7 @@ class FileBrowserServiceProvider extends ServiceProvider
 {
     public function register()
     {
-        $this->mergeConfigFrom(__DIR__ . '/config/file-browser.php', 'file-browser');
+        $this->mergeConfigFrom(__DIR__ . '/config/file-browser.php', 'esanj.file-browser');
     }
 
     public function boot()
@@ -35,15 +35,13 @@ class FileBrowserServiceProvider extends ServiceProvider
             __DIR__.'/resources/js' => public_path('vendor/file-browser/js'),
             __DIR__.'/resources/css' => public_path('vendor/file-browser/css'),
         ], ['file-browser-assets', 'laravel-assets']);
-
-        $this->registerRoutes();
     }
 
     protected function registerRoutes()
     {
         Route::group([
             'prefix' => 'esanj-file-browser',
-            'middleware' => config('file-browser.route.middleware', ['web', 'auth']),
+            'middleware' => config('esanj.file-browser.route.middleware', ['web', 'auth']),
         ], function () {
             $this->loadRoutesFrom(__DIR__.'/routes/web.php');
         });
