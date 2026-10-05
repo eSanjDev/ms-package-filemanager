@@ -26,8 +26,8 @@
                                 const input = document.querySelector(targetInputId);
                                 if (input) {
                                     input.value = file.url;
-                                    input.dispatchEvent(new Event('change'));
-                                    input.dispatchEvent(new Event('input'));
+                                    input.dispatchEvent(new Event('input', { bubbles: true }));
+                                    input.dispatchEvent(new Event('change', { bubbles: true }));
                                 }
                             }
 

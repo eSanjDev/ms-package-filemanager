@@ -94,7 +94,7 @@
                                     editor.execute('insertImage', { source: file.url });
                                 } else {
                                     // Fallback insertion
-                                    const content = `<img src="${file.url}" alt="${file.alt || file.name}">`;
+                                    const content = window.FileBrowserSDK.imageHtml(file.url, file.alt || file.name || '');
                                     const viewFragment = editor.data.processor.toView(content);
                                     const modelFragment = editor.data.toModel(viewFragment);
                                     editor.model.insertContent(modelFragment);

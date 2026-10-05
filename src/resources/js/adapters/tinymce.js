@@ -99,10 +99,9 @@
 
                     files.forEach(file => {
                         if ((file.mime && file.mime.startsWith('image/')) || (file.fileCategory && file.fileCategory === 'image')) {
-                            const altText = file.alt || file.name || '';
-                            htmlToInsert += `<img src="${file.url}" alt="${altText}" style="max-width:100%;" /><br>`;
+                            htmlToInsert += window.FileBrowserSDK.imageHtml(file.url, file.alt || file.name || '') + '<br>';
                         } else {
-                            htmlToInsert += `<a href="${file.url}">${file.name}</a><br>`;
+                            htmlToInsert += window.FileBrowserSDK.linkHtml(file.url, file.name || '') + '<br>';
                         }
                     });
 

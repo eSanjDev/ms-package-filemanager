@@ -1,90 +1,238 @@
-class FileBrowserSDK {
-    constructor(config) {
-        this.url = config.url || null;
-        this.callback = config.callback || null;
-        this._injectStyles();
-    }
+(function (window, document) {
+    const INIT_URL = '/esanj-file-browser/api/init';
+    const STYLE_ID = 'fb-styles';
+    const GENERIC_ERROR = 'Failed to load file browser. Please try again later.';
+    const TEXT_FIELDS = ['name', 'mime', 'fileCategory', 'alt'];
+    const NUMBER_FIELDS = ['size', 'width', 'height'];
 
-    open() {
-        window._fileBrowserInstance = this;
+    const state = {
+        modal: null,
+        frame: null,
+        origin: null,
+        expired: false,
+        loading: null,
+        owner: null,
+    };
 
-        const existingModal = document.getElementById('fb-modal-root');
-        if (existingModal) {
-            existingModal.style.display = 'flex';
-            return;
+    class FileBrowserSDK {
+        constructor(config = {}) {
+            this.callback = typeof config.callback === 'function' ? config.callback : null;
+            injectStyles();
         }
-        this._createModalDOM();
-        window.addEventListener('message', this._handleMessage.bind(this));
-    }
 
-    close() {
-        const modal = document.getElementById('fb-modal-root');
-        if (modal) {
-            modal.style.display = 'none';
-        }
-    }
+        open() {
+            state.owner = this;
 
-    _createModalDOM() {
-
-        fetch('/esanj-file-browser/api/init', {
-            method: 'GET',
-            headers: {
-                'Content-Type': 'application/json',
-                'Accept': 'application/json',
+            if (state.loading) {
+                return state.loading;
             }
-        })
-            .then(response => response.json())
-            .then(data => {
-                this.url = data.url;
-                this._renderModal();
-            })
-            .catch(error => {
-                alert('Failed to load file browser. Please try again later.');
-                console.error('Error fetching iframe URL:', error);
+
+            if (state.modal && !state.expired) {
+                state.modal.style.display = 'flex';
+
+                return Promise.resolve();
+            }
+
+            destroy();
+
+            state.loading = load().finally(() => {
+                state.loading = null;
             });
+
+            return state.loading;
+        }
+
+        close() {
+            close();
+        }
+
+        static imageHtml(url, alt = '') {
+            const image = document.createElement('img');
+            image.setAttribute('src', url);
+            image.setAttribute('alt', alt);
+            image.style.maxWidth = '100%';
+
+            return image.outerHTML;
+        }
+
+        static linkHtml(url, text = '') {
+            const link = document.createElement('a');
+            link.setAttribute('href', url);
+            link.textContent = text || url;
+
+            return link.outerHTML;
+        }
     }
 
-    _renderModal(){
-        const modalHTML = `
-            <div id="fb-modal-root">
-                <div class="fb-overlay"></div>
-                <div class="fb-container">
-                    <div class="fb-header">
-                        <span>File Browser</span>
-                        <button class="fb-close-btn">&times;</button>
-                    </div>
-                    <div class="fb-body">
-                        <iframe
-                            src="${this.url}"
-                            id="fb-iframe"
-                            allow="clipboard-write"
-                            style="width: 100%; height: 100%; border: none;">
-                        </iframe>
-                    </div>
+    function load() {
+        return fetch(INIT_URL, {
+            method: 'GET',
+            credentials: 'same-origin',
+            headers: { 'Accept': 'application/json' },
+        })
+            .then(response => response.json().catch(() => null).then(data => ({ response, data })))
+            .then(({ response, data }) => {
+                const url = response.ok && data ? trustedUrl(data.url) : null;
+
+                if (!url) {
+                    fail(errorMessage(response.status), data);
+
+                    return;
+                }
+
+                render(url);
+            })
+            .catch(error => fail(GENERIC_ERROR, error));
+    }
+
+    function render(url) {
+        const modal = document.createElement('div');
+        modal.id = 'fb-modal-root';
+        modal.innerHTML = `
+            <div class="fb-overlay"></div>
+            <div class="fb-container">
+                <div class="fb-header">
+                    <span>File Browser</span>
+                    <button type="button" class="fb-close-btn">&times;</button>
                 </div>
+                <div class="fb-body"></div>
             </div>
         `;
 
-        document.body.insertAdjacentHTML('beforeend', modalHTML);
+        const frame = document.createElement('iframe');
+        frame.id = 'fb-iframe';
+        frame.setAttribute('allow', 'clipboard-write');
+        frame.src = url.href;
 
-        this._bindEvents();
+        modal.querySelector('.fb-body').appendChild(frame);
+        modal.querySelector('.fb-close-btn').addEventListener('click', close);
+        modal.querySelector('.fb-overlay').addEventListener('click', close);
+        document.body.appendChild(modal);
+
+        state.modal = modal;
+        state.frame = frame;
+        state.origin = url.origin;
+        state.expired = false;
+
+        window.addEventListener('message', receive);
     }
 
-    _bindEvents() {
-        const modalRoot = document.getElementById('fb-modal-root');
-        if (!modalRoot) return;
+    function close() {
+        if (!state.modal) {
+            return;
+        }
 
-        const closeBtn = modalRoot.querySelector('.fb-close-btn');
-        const overlay = modalRoot.querySelector('.fb-overlay');
+        if (state.expired) {
+            destroy();
 
-        const closeAction = () => this.close();
+            return;
+        }
 
-        if (closeBtn) closeBtn.addEventListener('click', closeAction);
-        if (overlay) overlay.addEventListener('click', closeAction);
+        state.modal.style.display = 'none';
     }
 
-    _injectStyles() {
-        const css = `
+    function destroy() {
+        window.removeEventListener('message', receive);
+
+        if (state.modal) {
+            state.modal.remove();
+        }
+
+        state.modal = null;
+        state.frame = null;
+        state.origin = null;
+        state.expired = false;
+    }
+
+    function receive(event) {
+        if (!state.frame || event.source !== state.frame.contentWindow || event.origin !== state.origin) {
+            return;
+        }
+
+        const message = event.data;
+
+        if (!message || typeof message !== 'object') {
+            return;
+        }
+
+        if (message.type === 'FM_SESSION_EXPIRED') {
+            state.expired = true;
+        } else if (message.type === 'FM_CLOSE_MODAL') {
+            close();
+        } else if (message.type === 'FM_SELECTED_ITEMS') {
+            select(message.data);
+        }
+    }
+
+    function select(data) {
+        const owner = state.owner;
+
+        if (state.expired || !isOpen() || !isValidSelection(data)) {
+            return;
+        }
+
+        close();
+
+        if (owner && owner.callback) {
+            owner.callback(data);
+        }
+    }
+
+    function isOpen() {
+        return state.modal !== null && state.modal.style.display !== 'none';
+    }
+
+    function isValidSelection(data) {
+        return Array.isArray(data) && data.length > 0 && data.every(isValidFile);
+    }
+
+    function isValidFile(file) {
+        return file !== null
+            && typeof file === 'object'
+            && trustedUrl(file.url) !== null
+            && TEXT_FIELDS.every(field => file[field] == null || typeof file[field] === 'string')
+            && NUMBER_FIELDS.every(field => file[field] == null || typeof file[field] === 'number');
+    }
+
+    function trustedUrl(value) {
+        if (typeof value !== 'string') {
+            return null;
+        }
+
+        try {
+            const url = new URL(value);
+
+            return url.protocol === 'https:' || url.protocol === 'http:' ? url : null;
+        } catch (error) {
+            return null;
+        }
+    }
+
+    function errorMessage(status) {
+        if (status === 401 || status === 419) {
+            return 'Your session has expired. Please sign in again and retry.';
+        }
+
+        if (status === 403) {
+            return 'You do not have permission to use the file browser.';
+        }
+
+        return GENERIC_ERROR;
+    }
+
+    function fail(message, detail) {
+        alert(message);
+        console.error('File browser could not be opened:', detail);
+    }
+
+    function injectStyles() {
+        if (document.getElementById(STYLE_ID)) {
+            return;
+        }
+
+        const style = document.createElement('style');
+        style.id = STYLE_ID;
+        style.textContent = `
             #fb-modal-root {
                 position: fixed; top: 0; left: 0; width: 100%; height: 100%;
                 z-index: 999999; display: flex; align-items: center; justify-content: center;
@@ -111,25 +259,8 @@ class FileBrowserSDK {
             #fb-iframe { width: 100%; height: 100%; border: none; }
             @keyframes fb-fade-in { from { opacity: 0; transform: scale(0.98); } to { opacity: 1; transform: scale(1); } }
         `;
-        const style = document.createElement('style');
-        style.appendChild(document.createTextNode(css));
         document.head.appendChild(style);
     }
 
-    _handleMessage(event) {
-        const currentInstance = window._fileBrowserInstance || this;
-
-        if (event.data.type === 'FM_SELECTED_ITEMS') {
-            if (currentInstance.callback) {
-                currentInstance.callback(event.data.data);
-            }
-            currentInstance.close();
-        }
-
-        if (event.data.type === 'FM_CLOSE_MODAL') {
-            currentInstance.close();
-        }
-    }
-}
-
-window.FileBrowserSDK = FileBrowserSDK;
+    window.FileBrowserSDK = FileBrowserSDK;
+})(window, document);
