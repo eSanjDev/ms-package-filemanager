@@ -50,6 +50,14 @@ After publishing the configuration file, it is **highly recommended** to edit `c
 
 Please ensure you add appropriate middleware (e.g., `web`, `auth`, or a custom admin middleware) to restrict access to the file browser, preventing unauthorized users from accessing or managing files.
 
+```php
+'route' => [
+    'middleware' => ['web', 'auth', 'can:manage-media'],
+],
+```
+
+The package reads this file under the `esanj.file-browser` key. Run `php artisan config:clear` (or `config:cache` again) after changing it on a server that caches its configuration.
+
 ## Environment Configuration
 
 After installation, please add the following variables to your `.env` file:
@@ -62,6 +70,59 @@ FILE_BROWSER_URL=http://127.0.0.1:8000
 ```
 
 > **Note:** The `ACCOUNTING_BRIDGE_*` variables are required for the `esanj/auth-bridge` authentication package.
+
+`FILE_BROWSER_URL` is the base URL of the Esanj Multi-Media service. Use the exact scheme, host and port the service is served from: the browser script only accepts messages from that origin, so a URL that redirects elsewhere (for example from `http` to `https`) stops selections from arriving.
+
+## Media Service Setup
+
+Opening the file browser works in three steps:
+
+1. Your backend gets a service token with the `ACCOUNTING_BRIDGE_*` client credentials.
+2. It exchanges that token for a single-use ticket at `POST {FILE_BROWSER_URL}/api/v1/file-browser/tickets`.
+3. The modal loads `{FILE_BROWSER_URL}/file-browser/auth/handshake?ticket=...`, which starts the file browser session.
+
+The service token never reaches the browser. A ticket works once and expires after one minute by default. A page requests a new ticket the first time it opens the file browser and again after the file browser session expires.
+
+An administrator of the Multi-Media service must configure the service that represents your application:
+
+| Setting | Where | Value |
+|---|---|---|
+| Client | Services | The `client_id` must equal `ACCOUNTING_BRIDGE_CLIENT_ID`, and the service must be **active**. |
+| `access` permission | Service permissions | Required to receive tickets and open the file browser. |
+| Operation permissions | Service permissions | What your users may do: `files.search`, `files.download`, `files.upload`, `files.delete`, `files.move`, `files.copy`, `folders.create`, `folders.delete`, `folders.move`, `folders.copy`. Grant `share.create` to insert selected files into your forms and editors. |
+| Node Permissions | Service page | At least one node with a base path (`/` for the whole node) and an access type: `read_only` or `read_write`. Writes, uploads and moving files require `read_write`. |
+| Allowed Embed Origins | Service page | The exact origin of your application, one per line: `scheme://host[:port]` without a path or trailing slash. Wildcards are not supported. Only these origins can embed the file browser and receive selected files. |
+
+Example for local development, with your application at `http://localhost:8080` and the Multi-Media service at `http://127.0.0.1:8000`:
+
+```env
+FILE_BROWSER_URL=http://127.0.0.1:8000
+```
+
+```text
+Allowed Embed Origins: http://localhost:8080
+```
+
+Example for production, with your application at `https://admin.example.com` and the Multi-Media service at `https://media.example.com`:
+
+```env
+FILE_BROWSER_URL=https://media.example.com
+```
+
+```text
+Allowed Embed Origins: https://admin.example.com
+```
+
+### Troubleshooting
+
+| Symptom | Cause |
+|---|---|
+| The modal stays blank or the browser reports that the page refused to connect | The origin of your application is missing from **Allowed Embed Origins** or differs in scheme, host or port. The service answers with `Content-Security-Policy: frame-ancestors`. |
+| A message says your session has expired or you do not have permission | `/esanj-file-browser/api/init` answered 401 or 403: the user is not signed in to your application or is blocked by the route middleware. |
+| The file browser fails to load and the server log shows a failed ticket request | Check the `ACCOUNTING_BRIDGE_*` credentials, that `FILE_BROWSER_URL` is reachable from your server, and that the service is active and has the `access` permission (403). |
+| The file browser shows no folders | The service has no node permission for the node. |
+| A file is selected but nothing is inserted | Your origin is missing from **Allowed Embed Origins**, `share.create` is not granted, or `FILE_BROWSER_URL` does not match the origin the file browser is served from. |
+| The file browser reports an expired session | Close the modal and open it again; a fresh ticket is requested automatically. |
 
 ## Usage
 
