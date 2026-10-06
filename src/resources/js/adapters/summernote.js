@@ -13,23 +13,7 @@
                         callback: (files) => {
                             if (!files || files.length === 0) return;
 
-                            files.forEach(file => {
-                                if ((file.mime && file.mime.startsWith('image/')) || (file.fileCategory && file.fileCategory == 'image')) {
-                                    context.invoke('editor.insertImage', file.url, function ($image) {
-                                        $image.attr('alt', file.alt || file.name);
-                                    });
-                                } else {
-                                    var linkText = file.name;
-                                    var linkUrl = file.url;
-                                    var isNewWindow = true;
-
-                                    context.invoke('editor.createLink', {
-                                        text: linkText,
-                                        url: linkUrl,
-                                        isNewWindow: isNewWindow
-                                    });
-                                }
-                            });
+                            files.reduce((previous, file) => previous.then(() => insertFile(context, file)), Promise.resolve());
                         }
                     });
 
@@ -40,5 +24,28 @@
             return button.render();
         }
     };
+
+    function insertFile(context, file) {
+        if (!window.FileBrowserSDK.isImage(file)) {
+            insertLink(context, file);
+
+            return Promise.resolve();
+        }
+
+        return Promise.resolve(context.invoke('editor.insertImage', file.url, function ($image) {
+            $image.attr('alt', file.alt || file.name || '');
+        })).catch(() => insertLink(context, file));
+    }
+
+    function insertLink(context, file) {
+        const link = document.createElement('a');
+        link.href = file.url;
+        link.target = '_blank';
+        link.rel = 'noopener';
+        link.textContent = file.name || file.url;
+
+        context.invoke('editor.insertNode', link);
+        context.invoke('editor.insertText', ' ');
+    }
 
 })(window);

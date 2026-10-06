@@ -23,7 +23,7 @@
                             if (!files || files.length === 0) return;
                             const file = files[0];
                             if (targetInputId) {
-                                const input = document.querySelector(targetInputId);
+                                const input = find(targetInputId);
                                 if (input) {
                                     input.value = file.url;
                                     input.dispatchEvent(new Event('input', { bubbles: true }));
@@ -32,15 +32,20 @@
                             }
 
                             if (targetPreviewId) {
-                                const img = document.querySelector(targetPreviewId);
-                                if (img) {
+                                const img = find(targetPreviewId);
+                                if (img && window.FileBrowserSDK.isImage(file)) {
                                     img.src = file.url;
                                     img.style.display = 'block';
+                                } else if (img) {
+                                    img.removeAttribute('src');
+                                    img.style.display = 'none';
                                 }
                             }
 
                             if (callbackName && typeof window[callbackName] === 'function') {
                                 window[callbackName](files);
+                            } else if (callbackName) {
+                                console.warn(`FileBrowserAdapter: window.${callbackName} is not a function.`);
                             }
                         }
                     });
@@ -50,4 +55,14 @@
             });
         }
     };
+
+    function find(selector) {
+        try {
+            return document.querySelector(selector);
+        } catch (error) {
+            console.warn(`FileBrowserAdapter: invalid selector "${selector}".`);
+
+            return null;
+        }
+    }
 })(window);

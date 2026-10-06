@@ -26,7 +26,7 @@
 
                     const file = files[0];
 
-                    if (fileType === 'image' && file.fileCategory !== 'image') {
+                    if (fileType === 'image' && !window.FileBrowserSDK.isImage(file)) {
                         alert('Selected file is not an image');
                         return;
                     }
@@ -66,7 +66,7 @@
                     if (!files || files.length === 0) return;
                     const file = files[0];
 
-                    if (type === 'image' && file.fileCategory !== 'image') {
+                    if (type === 'image' && !window.FileBrowserSDK.isImage(file)) {
                         alert('Selected file is not an image');
                         return;
                     }
@@ -98,7 +98,7 @@
                     let htmlToInsert = '';
 
                     files.forEach(file => {
-                        if ((file.mime && file.mime.startsWith('image/')) || (file.fileCategory && file.fileCategory === 'image')) {
+                        if (window.FileBrowserSDK.isImage(file)) {
                             htmlToInsert += window.FileBrowserSDK.imageHtml(file.url, file.alt || file.name || '') + '<br>';
                         } else {
                             htmlToInsert += window.FileBrowserSDK.linkHtml(file.url, file.name || '') + '<br>';

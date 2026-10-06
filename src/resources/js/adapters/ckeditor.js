@@ -15,7 +15,7 @@
                 var dialogName = ev.data.name;
                 var dialogDefinition = ev.data.definition;
 
-                if (dialogName === 'image' || dialogName === 'link') {
+                if (dialogName === 'image' || dialogName === 'image2' || dialogName === 'link') {
                     var infoTab = dialogDefinition.getContents('info');
                     var browseBtn = infoTab.get('browse');
 
@@ -43,10 +43,16 @@
                     if (window.CKEDITOR && window.CKEDITOR.dialog) {
                         const dialog = window.CKEDITOR.dialog.getCurrent();
                         if (dialog) {
-                            if (dialog.getName() === 'image') {
-                                const element = dialog.getContentElement('info', 'txtUrl');
+                            if (dialog.getName() === 'image' || dialog.getName() === 'image2') {
+                                if (!window.FileBrowserSDK.isImage(file)) {
+                                    alert('Selected file is not an image');
+                                    return;
+                                }
+
+                                const isImage2 = dialog.getName() === 'image2';
+                                const element = dialog.getContentElement('info', isImage2 ? 'src' : 'txtUrl');
                                 if (element) element.setValue(file.url);
-                                const alt = dialog.getContentElement('info', 'txtAlt');
+                                const alt = dialog.getContentElement('info', isImage2 ? 'alt' : 'txtAlt');
                                 if (alt) alt.setValue(file.alt || file.name);
                             } else if (dialog.getName() === 'link') {
                                 const element = dialog.getContentElement('info', 'url');
@@ -61,8 +67,8 @@
 
         v5: {
             create: function(editor) {
-                // Check for ButtonView availability (handles different UMD bundle structures)
-                const ButtonView = window.CKEDITOR.ButtonView || (window.CKEDITOR.ui && window.CKEDITOR.ui.ButtonView);
+                const ckeditor = window.CKEDITOR || {};
+                const ButtonView = defaultConfig.ButtonView || ckeditor.ButtonView || (ckeditor.ui && ckeditor.ui.ButtonView);
 
                 if (!ButtonView) {
                     console.warn('FileBrowserAdapter: ButtonView not found. Cannot register toolbar button.');
@@ -73,7 +79,7 @@
                     const view = new ButtonView(locale);
 
                     view.set({
-                        label: 'Insert Image',
+                        label: 'Insert File',
                         icon: '<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V5h14v14zm-5-7l-3 3.72L9 13l-3 4h12l-4-5z"/></svg>',
                         tooltip: true
                     });
@@ -89,16 +95,20 @@
                                 if (!files || files.length === 0) return;
                                 const file = files[0];
 
-                                // Clean way to insert image if Image plugin is active
-                                if (editor.commands.get('insertImage')) {
-                                    editor.execute('insertImage', { source: file.url });
-                                } else {
-                                    // Fallback insertion
-                                    const content = window.FileBrowserSDK.imageHtml(file.url, file.alt || file.name || '');
-                                    const viewFragment = editor.data.processor.toView(content);
-                                    const modelFragment = editor.data.toModel(viewFragment);
-                                    editor.model.insertContent(modelFragment);
+                                const isImage = window.FileBrowserSDK.isImage(file);
+
+                                if (isImage && editor.commands.get('insertImage')) {
+                                    editor.execute('insertImage', { source: [{ src: file.url, alt: file.alt || file.name || '' }] });
+
+                                    return;
                                 }
+
+                                const content = isImage
+                                    ? window.FileBrowserSDK.imageHtml(file.url, file.alt || file.name || '')
+                                    : window.FileBrowserSDK.linkHtml(file.url, file.name || '');
+                                const viewFragment = editor.data.processor.toView(content);
+                                const modelFragment = editor.data.toModel(viewFragment);
+                                editor.model.insertContent(modelFragment);
                             }
                         });
                         picker.open();
@@ -109,11 +119,5 @@
             }
         }
     };
-
-    function getUrlParam(paramName) {
-        var reParam = new RegExp('(?:[\?&]|&)' + paramName + '=([^&]+)', 'i');
-        var match = window.location.search.match(reParam);
-        return (match && match.length > 1) ? match[1] : null;
-    }
 
 })(window);

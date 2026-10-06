@@ -1,7 +1,9 @@
 (function (window, document) {
-    const INIT_URL = '/esanj-file-browser/api/init';
     const STYLE_ID = 'fb-styles';
     const GENERIC_ERROR = 'Failed to load file browser. Please try again later.';
+    const SESSION_ERROR = 'Your session has expired. Please sign in again and retry.';
+    const COOKIE_ERROR = 'The file browser could not keep its session. Make sure this application and the file browser are served from the same site.';
+    const RECONNECT_COOLDOWN_MS = 60000;
     const TEXT_FIELDS = ['name', 'mime', 'fileCategory', 'alt'];
     const NUMBER_FIELDS = ['size', 'width', 'height'];
 
@@ -9,7 +11,10 @@
         modal: null,
         frame: null,
         origin: null,
+        ready: false,
         expired: false,
+        reconnectedAt: 0,
+        returnFocus: null,
         loading: null,
         owner: null,
     };
@@ -23,27 +28,29 @@
         open() {
             state.owner = this;
 
+            if (!isOpen()) {
+                state.returnFocus = document.activeElement;
+            }
+
             if (state.loading) {
                 return state.loading;
             }
 
             if (state.modal && !state.expired) {
-                state.modal.style.display = 'flex';
+                show();
 
                 return Promise.resolve();
             }
 
-            destroy();
-
-            state.loading = load().finally(() => {
-                state.loading = null;
-            });
-
-            return state.loading;
+            return reload();
         }
 
         close() {
             close();
+        }
+
+        static isImage(file) {
+            return Boolean(file) && (file.fileCategory === 'image' || (typeof file.mime === 'string' && file.mime.startsWith('image/')));
         }
 
         static imageHtml(url, alt = '') {
@@ -64,18 +71,30 @@
         }
     }
 
+    FileBrowserSDK.initUrl = '/esanj-file-browser/api/init';
+
+    function reload() {
+        destroy();
+
+        state.loading = load().finally(() => {
+            state.loading = null;
+        });
+
+        return state.loading;
+    }
+
     function load() {
-        return fetch(INIT_URL, {
+        return fetch(FileBrowserSDK.initUrl, {
             method: 'GET',
             credentials: 'same-origin',
             headers: { 'Accept': 'application/json' },
         })
             .then(response => response.json().catch(() => null).then(data => ({ response, data })))
             .then(({ response, data }) => {
-                const url = response.ok && data ? trustedUrl(data.url) : null;
+                const url = response.ok && !response.redirected && data ? trustedUrl(data.url) : null;
 
                 if (!url) {
-                    fail(errorMessage(response.status), data);
+                    fail(errorMessage(response), data);
 
                     return;
                 }
@@ -88,12 +107,15 @@
     function render(url) {
         const modal = document.createElement('div');
         modal.id = 'fb-modal-root';
+        modal.setAttribute('role', 'dialog');
+        modal.setAttribute('aria-modal', 'true');
+        modal.setAttribute('aria-label', 'File Browser');
         modal.innerHTML = `
             <div class="fb-overlay"></div>
             <div class="fb-container">
                 <div class="fb-header">
                     <span>File Browser</span>
-                    <button type="button" class="fb-close-btn">&times;</button>
+                    <button type="button" class="fb-close-btn" aria-label="Close">&times;</button>
                 </div>
                 <div class="fb-body"></div>
             </div>
@@ -101,6 +123,7 @@
 
         const frame = document.createElement('iframe');
         frame.id = 'fb-iframe';
+        frame.title = 'File Browser';
         frame.setAttribute('allow', 'clipboard-write');
         frame.src = url.href;
 
@@ -112,9 +135,17 @@
         state.modal = modal;
         state.frame = frame;
         state.origin = url.origin;
+        state.ready = false;
         state.expired = false;
 
         window.addEventListener('message', receive);
+        document.addEventListener('keydown', escape, true);
+        frame.focus();
+    }
+
+    function show() {
+        state.modal.style.display = 'flex';
+        state.frame.focus();
     }
 
     function close() {
@@ -122,17 +153,27 @@
             return;
         }
 
-        if (state.expired) {
+        if (state.expired || !state.ready) {
             destroy();
-
-            return;
+        } else {
+            state.modal.style.display = 'none';
         }
 
-        state.modal.style.display = 'none';
+        restoreFocus();
+    }
+
+    function restoreFocus() {
+        const element = state.returnFocus;
+        state.returnFocus = null;
+
+        if (element && element.isConnected && typeof element.focus === 'function') {
+            element.focus();
+        }
     }
 
     function destroy() {
         window.removeEventListener('message', receive);
+        document.removeEventListener('keydown', escape, true);
 
         if (state.modal) {
             state.modal.remove();
@@ -141,7 +182,15 @@
         state.modal = null;
         state.frame = null;
         state.origin = null;
+        state.ready = false;
         state.expired = false;
+    }
+
+    function escape(event) {
+        if (event.key === 'Escape' && isOpen()) {
+            event.stopPropagation();
+            close();
+        }
     }
 
     function receive(event) {
@@ -155,13 +204,34 @@
             return;
         }
 
-        if (message.type === 'FM_SESSION_EXPIRED') {
-            state.expired = true;
+        if (message.type === 'FM_READY') {
+            state.ready = true;
+        } else if (message.type === 'FM_SESSION_EXPIRED') {
+            expire();
         } else if (message.type === 'FM_CLOSE_MODAL') {
             close();
         } else if (message.type === 'FM_SELECTED_ITEMS') {
             select(message.data);
         }
+    }
+
+    function expire() {
+        state.expired = true;
+
+        if (!isOpen()) {
+            return;
+        }
+
+        if (!state.ready || Date.now() - state.reconnectedAt < RECONNECT_COOLDOWN_MS) {
+            destroy();
+            restoreFocus();
+            fail(COOKIE_ERROR, null);
+
+            return;
+        }
+
+        state.reconnectedAt = Date.now();
+        reload();
     }
 
     function select(data) {
@@ -208,12 +278,12 @@
         }
     }
 
-    function errorMessage(status) {
-        if (status === 401 || status === 419) {
-            return 'Your session has expired. Please sign in again and retry.';
+    function errorMessage(response) {
+        if (response.status === 401 || response.status === 419 || response.redirected) {
+            return SESSION_ERROR;
         }
 
-        if (status === 403) {
+        if (response.status === 403) {
             return 'You do not have permission to use the file browser.';
         }
 
