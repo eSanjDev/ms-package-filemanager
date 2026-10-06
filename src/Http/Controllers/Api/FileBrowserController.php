@@ -7,17 +7,20 @@
 
 namespace Esanj\FileBrowser\Http\Controllers\Api;
 
-use Illuminate\Http\Request;
-use Illuminate\Routing\Controller;
 use Esanj\FileBrowser\Services\FileBrowserService;
+use Illuminate\Http\JsonResponse;
+use Illuminate\Routing\Controller;
 
 class FileBrowserController extends Controller
 {
-    public function init(Request $request, FileBrowserService $tokenService)
+    public function init(): JsonResponse
     {
-        return response()
-            ->json([
-                'url' => $tokenService->getUrl()
-            ]);
+        try {
+            return response()->json(['url' => app(FileBrowserService::class)->getUrl()]);
+        } catch (\Throwable $e) {
+            report($e);
+
+            return response()->json(['message' => 'The file browser is not available right now.'], 502);
+        }
     }
 }

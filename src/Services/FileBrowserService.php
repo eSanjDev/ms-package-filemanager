@@ -8,23 +8,24 @@
 namespace Esanj\FileBrowser\Services;
 
 use Esanj\AuthBridge\Contracts\ClientCredentialsServiceInterface;
+use Esanj\AuthBridge\Exceptions\ConfigurationException;
+use Illuminate\Http\Client\Response;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Str;
 
 class FileBrowserService
 {
+    private const SCOPE = '*';
+
     public function __construct(
         private ClientCredentialsServiceInterface $clientCredentials
     ) {}
 
     public function generateToken(): string
     {
-        $tokenData = $this->clientCredentials->getAccessToken(
-            clientId: config('esanj.auth_bridge.client_id'),
-            clientSecret: config('esanj.auth_bridge.client_secret'),
-            scope: '*'
-        );
-        return $tokenData->accessToken;
+        [$clientId, $clientSecret] = $this->credentials();
+
+        return $this->clientCredentials->getAccessToken($clientId, $clientSecret, self::SCOPE)->accessToken;
     }
 
     public function getUrl(array $payload = []): string
@@ -39,15 +40,41 @@ class FileBrowserService
 
     protected function issueTicket(string $baseUrl): string
     {
-        $ticket = Http::withToken($this->generateToken())
-            ->acceptJson()
-            ->timeout(10)
-            ->post($baseUrl . 'api/v1/file-browser/tickets')
-            ->throw()
-            ->json('ticket');
+        $response = $this->requestTicket($baseUrl);
+
+        if ($response->status() === 401) {
+            [$clientId, $clientSecret] = $this->credentials();
+            $this->clientCredentials->invalidateToken($clientId, $clientSecret, self::SCOPE);
+            $response = $this->requestTicket($baseUrl);
+        }
+
+        $ticket = $response->throw()->json('ticket');
 
         throw_if(! is_string($ticket) || $ticket === '', \RuntimeException::class, 'The file browser did not issue a ticket.');
 
         return $ticket;
+    }
+
+    protected function requestTicket(string $baseUrl): Response
+    {
+        return Http::withToken($this->generateToken())
+            ->acceptJson()
+            ->timeout(10)
+            ->post($baseUrl . 'api/v1/file-browser/tickets');
+    }
+
+    /**
+     * @return array{0: string, 1: string}
+     */
+    protected function credentials(): array
+    {
+        $clientId = config('esanj.auth_bridge.client_id');
+        $clientSecret = config('esanj.auth_bridge.client_secret');
+
+        if (blank($clientId) || blank($clientSecret)) {
+            throw ConfigurationException::missingCredentials();
+        }
+
+        return [$clientId, $clientSecret];
     }
 }

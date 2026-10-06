@@ -22,9 +22,6 @@ class FileBrowserServiceProvider extends ServiceProvider
         // Routes
         $this->registerRoutes();
 
-        // Views
-        $this->loadViewsFrom(__DIR__ . '/resources/views', 'file-browser');
-
         // Publish config
         $this->publishes([
             __DIR__.'/config/file-browser.php' => config_path('esanj/file-browser.php'),
@@ -33,7 +30,6 @@ class FileBrowserServiceProvider extends ServiceProvider
         // Publish assets
         $this->publishes([
             __DIR__.'/resources/js' => public_path('vendor/file-browser/js'),
-            __DIR__.'/resources/css' => public_path('vendor/file-browser/css'),
         ], ['file-browser-assets', 'laravel-assets']);
     }
 
