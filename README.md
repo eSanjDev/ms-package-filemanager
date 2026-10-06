@@ -48,7 +48,7 @@ php artisan vendor:publish --tag=file-browser-config
 
 After publishing the configuration file, it is **highly recommended** to edit `config/esanj/file-browser.php` and customize the `middleware` setting.
 
-Please ensure you add appropriate middleware (e.g., `web`, `auth`, or a custom admin middleware) to restrict access to the file browser, preventing unauthorized users from accessing or managing files.
+Please ensure you add appropriate middleware (e.g., `web`, `auth`, or a custom admin middleware) to restrict access to the file browser, preventing unauthorized users from accessing or managing files. The ticket does not identify your user: everyone who passes this middleware works with every permission granted to your service in the Multi-Media service (upload, delete, move, and so on). With the default `['web', 'auth']`, that is every signed-in user of your application.
 
 ```php
 'route' => [
@@ -66,12 +66,12 @@ After installation, please add the following variables to your `.env` file:
 ACCOUNTING_BRIDGE_CLIENT_ID=
 ACCOUNTING_BRIDGE_CLIENT_SECRET=
 ACCOUNTING_BRIDGE_BASE_URL=https://auth.esanj.io
-FILE_BROWSER_URL=http://127.0.0.1:8000
+FILE_BROWSER_URL=http://media.app.test:8000
 ```
 
 > **Note:** The `ACCOUNTING_BRIDGE_*` variables are required for the `esanj/auth-bridge` authentication package.
 
-`FILE_BROWSER_URL` is the base URL of the Esanj Multi-Media service. Use the exact scheme, host and port the service is served from: the browser script only accepts messages from that origin, so a URL that redirects elsewhere (for example from `http` to `https`) stops selections from arriving.
+`FILE_BROWSER_URL` is the base URL of the Esanj Multi-Media service. Use the exact scheme, host and port the service is served from: the server requests tickets from it with a `POST`, which fails when the URL redirects (for example from `http` to `https`), and the browser script only accepts messages from that origin.
 
 ## Media Service Setup
 
@@ -93,14 +93,16 @@ An administrator of the Multi-Media service must configure the service that repr
 | Node Permissions | Service page | At least one node with a base path (`/` for the whole node) and an access type: `read_only` or `read_write`. Writes, uploads and moving files require `read_write`. |
 | Allowed Embed Origins | Service page | The exact origin of your application, one per line: `scheme://host[:port]` without a path or trailing slash. Wildcards are not supported. Only these origins can embed the file browser and receive selected files. |
 
-Example for local development, with your application at `http://localhost:8080` and the Multi-Media service at `http://127.0.0.1:8000`:
+The file browser runs inside an iframe and keeps its session in cookies, so your application and the Multi-Media service must be on the same site, which means the same registrable domain, such as `admin.example.com` and `media.example.com`. `localhost` and `127.0.0.1` are different sites. Avoid running both on `localhost` with two ports: cookies ignore the port, so the two applications overwrite each other's session and `XSRF-TOKEN` cookies. Embedding across sites only works over HTTPS with the service running as `APP_ENV=production` (which makes its file browser cookie `SameSite=None; Secure`) and with `SESSION_SAME_SITE=none` and `SESSION_SECURE_COOKIE=true`, and browsers that block third-party cookies may still refuse it.
+
+Example for local development, with your application at `http://app.test:8080` and the Multi-Media service at `http://media.app.test:8000` (point both names at `127.0.0.1` in your hosts file):
 
 ```env
-FILE_BROWSER_URL=http://127.0.0.1:8000
+FILE_BROWSER_URL=http://media.app.test:8000
 ```
 
 ```text
-Allowed Embed Origins: http://localhost:8080
+Allowed Embed Origins: http://app.test:8080
 ```
 
 Example for production, with your application at `https://admin.example.com` and the Multi-Media service at `https://media.example.com`:
@@ -119,14 +121,25 @@ Allowed Embed Origins: https://admin.example.com
 |---|---|
 | The modal stays blank or the browser reports that the page refused to connect | The origin of your application is missing from **Allowed Embed Origins** or differs in scheme, host or port. The service answers with `Content-Security-Policy: frame-ancestors`. |
 | A message says your session has expired or you do not have permission | `/esanj-file-browser/api/init` answered 401 or 403: the user is not signed in to your application or is blocked by the route middleware. |
-| The file browser fails to load and the server log shows a failed ticket request | Check the `ACCOUNTING_BRIDGE_*` credentials, that `FILE_BROWSER_URL` is reachable from your server, and that the service is active and has the `access` permission (403). |
-| The file browser shows no folders | The service has no node permission for the node. |
+| "Failed to load file browser" and the server log shows the reason | `/esanj-file-browser/api/init` answered 502 because the ticket could not be issued. Check that `ACCOUNTING_BRIDGE_BASE_URL`, `ACCOUNTING_BRIDGE_CLIENT_ID` and `ACCOUNTING_BRIDGE_CLIENT_SECRET` are set and valid (run `php artisan config:clear` after changing them), that `FILE_BROWSER_URL` is reachable from your server without redirects, and that the service is active and has the `access` permission. |
+| The file browser shows "No storage node is available for this service" | The service has no node permission. |
 | A file is selected but nothing is inserted | Your origin is missing from **Allowed Embed Origins**, `share.create` is not granted, or `FILE_BROWSER_URL` does not match the origin the file browser is served from. |
-| The file browser reports an expired session | Close the modal and open it again; a fresh ticket is requested automatically. |
+| The file browser session expires while the modal is open | The modal reconnects with a fresh ticket by itself. If it was hidden, a fresh ticket is requested the next time it opens. |
+| "The file browser could not keep its session" | The service cookies do not reach the iframe: your application and the service are on different sites (for example `localhost` and `127.0.0.1`), or both run on `localhost` and overwrite each other's cookies. Serve them from two hosts of the same site. |
 
 ## Usage
 
 This package supports multiple editors (Summernote, TinyMCE, CKEditor) and a standalone button mode.
+
+The script calls `/esanj-file-browser/api/init` on your application. If your application is served under a sub-path, point it to the right URL after loading `file-browser.js`:
+
+```html
+<script>
+    FileBrowserSDK.initUrl = @json(route('file-browser.init'));
+</script>
+```
+
+Press `Escape` or click outside the modal to close it.
 
 ### Standalone Button
 
@@ -246,6 +259,7 @@ For older versions (v4), use `file_browser_callback`.
 tinymce.init({
     selector: '#mytextarea',
     plugins: 'image link media table',
+    toolbar: 'undo redo | link image media | filebrowser',
 
     // Use this callback for file selection
     file_browser_callback: FileBrowserAdapters.TinyMCE.v4,
@@ -274,22 +288,18 @@ First, include the adapter script after the main file browser script:
 
 #### CKEditor 4
 
-For CKEditor 4, use the `initV4` method after replacing your textarea.
+For CKEditor 4, call the `initV4` method before creating the editor.
 
 ```html
 <textarea name="editor1" id="editor1"></textarea>
 
 <script src="https://cdn.ckeditor.com/4.22.1/standard/ckeditor.js"></script>
 <script>
-    CKEDITOR.replace('editor1', {
-        // Essential: Disable default file browser URLs so the adapter can take over
-        filebrowserBrowseUrl: 'javascript:void(0);',
-        filebrowserImageBrowseUrl: 'javascript:void(0);'
-    });
-
-    // Initialize the adapter for CKEditor 4
-    // This hooks into the file browser buttons automatically
+    // Initialize the adapter before creating the editor.
+    // It shows the Browse button of the image, image2 and link dialogs and opens the file browser from it.
     FileBrowserAdapters.CKEditor.initV4();
+
+    CKEDITOR.replace('editor1');
 </script>
 ```
 
@@ -305,10 +315,13 @@ For CKEditor 5, add the adapter plugin to your editor configuration.
 <script src="https://cdn.ckeditor.com/ckeditor5/47.4.0/ckeditor5.umd.js"></script>
 
 <script>
-    const { ClassicEditor, Essentials, Image, Link } = CKEDITOR;
+    const { ClassicEditor, Essentials, Paragraph, Bold, Italic, Image, Link } = CKEDITOR;
 
     ClassicEditor
         .create(document.querySelector('#editor5'), {
+            // CKEditor 5 v44+ requires a license key; the CDN build does not accept 'GPL'
+            licenseKey: '<YOUR_LICENSE_KEY>',
+
              // 1. Add the adapter plugin
             extraPlugins: [FileBrowserAdapters.CKEditor.v5.create],
 
@@ -318,7 +331,7 @@ For CKEditor 5, add the adapter plugin to your editor configuration.
                 'fileBrowser' // <--- Adds the button
             ],
             
-            plugins: [ Essentials, Image, Link, /* ... other plugins */ ],
+            plugins: [ Essentials, Paragraph, Bold, Italic, Image, Link, /* ... other plugins */ ],
         })
         .then(editor => {
             console.log('Editor initialized');
@@ -327,6 +340,14 @@ For CKEditor 5, add the adapter plugin to your editor configuration.
             console.error(error);
         });
 </script>
+```
+
+When CKEditor 5 comes from npm (for example with Vite), there is no global `CKEDITOR`. Pass the `ButtonView` class to the adapter before creating the editor:
+
+```javascript
+import { ButtonView } from 'ckeditor5';
+
+FileBrowserAdapters.CKEditor.configure({ ButtonView });
 ```
 
 ### Summernote Integration
